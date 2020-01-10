@@ -44,14 +44,14 @@ G_DEFINE_TYPE (GepubArchive, gepub_archive, G_TYPE_OBJECT)
 static gboolean
 gepub_archive_open (GepubArchive *archive)
 {
+    int r;
+
     archive->archive = archive_read_new ();
     archive_read_support_format_zip (archive->archive);
-    int r;
 
     r = archive_read_open_filename (archive->archive, archive->path, 10240);
 
     if (r != ARCHIVE_OK) {
-        archive_read_free (archive->archive);
         return FALSE;
     }
 
@@ -160,7 +160,7 @@ gepub_archive_get_root_file (GepubArchive *archive)
     xmlNode *root_element = NULL;
     xmlNode *root_node = NULL;
     GBytes *bytes;
-    const guchar *buffer;
+    const gchar *buffer;
     gsize bufsize;
     gchar *root_file = NULL;
 
@@ -173,7 +173,7 @@ gepub_archive_get_root_file (GepubArchive *archive)
     doc = xmlRecoverMemory (buffer, bufsize);
     root_element = xmlDocGetRootElement (doc);
     root_node = gepub_utils_get_element_by_tag (root_element, "rootfile");
-    root_file = xmlGetProp (root_node, "full-path");
+    root_file = gepub_utils_get_prop (root_node, "full-path");
 
     xmlFreeDoc (doc);
     g_bytes_unref (bytes);

@@ -27,6 +27,28 @@
 #include "gepub-archive.h"
 #include "gepub-text-chunk.h"
 
+
+static GQuark
+gepub_error_quark (void)
+{
+    static GQuark q = 0;
+    if (q == 0)
+        q = g_quark_from_string ("gepub-quark");
+    return q;
+}
+
+/**
+ * GepubDocError:
+ * @GEPUB_ERROR_INVALID: Invalid file
+ *
+ * Common errors that may be reported by GepubDoc.
+ */
+typedef enum {
+    GEPUB_ERROR_INVALID = 0,  /*< nick=Invalid >*/
+} GepubDocError;
+
+
+
 static void gepub_doc_fill_resources (GepubDoc *doc);
 static void gepub_doc_fill_spine (GepubDoc *doc);
 static void gepub_doc_initable_iface_init (GInitableIface *iface);
@@ -41,7 +63,7 @@ struct _GepubDoc {
     GHashTable *resources;
 
     GList *spine;
-    GList *page;
+    GList *chapter;
 };
 
 struct _GepubDocClass {
@@ -51,7 +73,7 @@ struct _GepubDocClass {
 enum {
     PROP_0,
     PROP_PATH,
-    PROP_PAGE,
+    PROP_CHAPTER,
     NUM_PROPS
 };
 
@@ -98,8 +120,8 @@ gepub_doc_set_property (GObject      *object,
     case PROP_PATH:
         doc->path = g_value_dup_string (value);
         break;
-    case PROP_PAGE:
-        gepub_doc_set_page (doc, g_value_get_int (value));
+    case PROP_CHAPTER:
+        gepub_doc_set_chapter (doc, g_value_get_int (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -119,8 +141,8 @@ gepub_doc_get_property (GObject    *object,
     case PROP_PATH:
         g_value_set_string (value, doc->path);
         break;
-    case PROP_PAGE:
-        g_value_set_int (value, gepub_doc_get_page (doc));
+    case PROP_CHAPTER:
+        g_value_set_int (value, gepub_doc_get_chapter (doc));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -157,10 +179,10 @@ gepub_doc_class_init (GepubDocClass *klass)
                              G_PARAM_READWRITE |
                              G_PARAM_CONSTRUCT_ONLY |
                              G_PARAM_STATIC_STRINGS);
-    properties[PROP_PAGE] =
-        g_param_spec_int ("page",
-                          "Current page",
-                          "The current page index",
+    properties[PROP_CHAPTER] =
+        g_param_spec_int ("chapter",
+                          "Current chapter",
+                          "The current chapter index",
                           -1, G_MAXINT, 0,
                           G_PARAM_READWRITE |
                           G_PARAM_STATIC_STRINGS);
@@ -175,18 +197,27 @@ gepub_doc_initable_init (GInitable     *initable,
 {
     GepubDoc *doc = GEPUB_DOC (initable);
     gchar *file;
-    gsize bufsize = 0;
     gint i = 0, len;
 
     g_assert (doc->path != NULL);
 
     doc->archive = gepub_archive_new (doc->path);
     file = gepub_archive_get_root_file (doc->archive);
-    if (!file)
+    if (!file) {
+        if (error != NULL) {
+            g_set_error (error, gepub_error_quark (), GEPUB_ERROR_INVALID,
+                         "Invalid epub file: %s", doc->path);
+        }
         return FALSE;
+    }
     doc->content = gepub_archive_read_entry (doc->archive, file);
-    if (!doc->content)
+    if (!doc->content) {
+        if (error != NULL) {
+            g_set_error (error, gepub_error_quark (), GEPUB_ERROR_INVALID,
+                         "Invalid epub file: %s", doc->path);
+        }
         return FALSE;
+    }
 
     len = strlen (file);
     doc->content_base = g_strdup ("");
@@ -215,14 +246,15 @@ gepub_doc_initable_iface_init (GInitableIface *iface)
 /**
  * gepub_doc_new:
  * @path: the epub doc path
+ * @error: (nullable): Error
  *
  * Returns: (transfer full): the new GepubDoc created
  */
 GepubDoc *
-gepub_doc_new (const gchar *path)
+gepub_doc_new (const gchar *path, GError **error)
 {
     return g_initable_new (GEPUB_TYPE_DOC,
-                           NULL, NULL,
+                           NULL, error,
                            "path", path,
                            NULL);
 }
@@ -251,13 +283,13 @@ gepub_doc_fill_resources (GepubDoc *doc)
             continue;
         }
 
-        id = xmlGetProp (item, "id");
-        tmpuri = xmlGetProp (item, "href");
+        id = gepub_utils_get_prop (item, "id");
+        tmpuri = gepub_utils_get_prop (item, "href");
         uri = g_strdup_printf ("%s%s", doc->content_base, tmpuri);
         g_free (tmpuri);
 
         res = g_malloc (sizeof (GepubResource));
-        res->mime = xmlGetProp (item, "media-type");
+        res->mime = gepub_utils_get_prop (item, "media-type");
         res->uri = uri;
         g_hash_table_insert (doc->resources, id, res);
         item = item->next;
@@ -290,14 +322,14 @@ gepub_doc_fill_spine (GepubDoc *doc)
             continue;
         }
 
-        id = xmlGetProp (item, "idref");
+        id = gepub_utils_get_prop (item, "idref");
 
         spine = g_list_prepend (spine, id);
         item = item->next;
     }
 
     doc->spine = g_list_reverse (spine);
-    doc->page = doc->spine;
+    doc->chapter = doc->spine;
 
     xmlFreeDoc (xdoc);
 }
@@ -311,6 +343,8 @@ gepub_doc_fill_spine (GepubDoc *doc)
 GBytes *
 gepub_doc_get_content (GepubDoc *doc)
 {
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+
     return doc->content;
 }
 
@@ -333,6 +367,9 @@ gepub_doc_get_metadata (GepubDoc *doc, const gchar *mdata)
     const char *data;
     gsize size;
 
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (mdata != NULL, NULL);
+
     data = g_bytes_get_data (doc->content, &size);
     xdoc = xmlRecoverMemory (data, size);
     root_element = xmlDocGetRootElement (xdoc);
@@ -340,7 +377,7 @@ gepub_doc_get_metadata (GepubDoc *doc, const gchar *mdata)
     mdata_node = gepub_utils_get_element_by_tag (mnode, mdata);
 
     text = xmlNodeGetContent (mdata_node);
-    ret = g_strdup (text);
+    ret = g_strdup ((const char *) text);
     xmlFree (text);
 
     xmlFreeDoc (xdoc);
@@ -357,6 +394,8 @@ gepub_doc_get_metadata (GepubDoc *doc, const gchar *mdata)
 GHashTable *
 gepub_doc_get_resources (GepubDoc *doc)
 {
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+
     return doc->resources;
 }
 
@@ -370,7 +409,12 @@ gepub_doc_get_resources (GepubDoc *doc)
 GBytes *
 gepub_doc_get_resource_by_id (GepubDoc *doc, const gchar *id)
 {
-    GepubResource *gres = g_hash_table_lookup (doc->resources, id);
+    GepubResource *gres;
+
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (id != NULL, NULL);
+
+    gres = g_hash_table_lookup (doc->resources, id);
     if (!gres) {
         // not found
         return NULL;
@@ -389,6 +433,9 @@ gepub_doc_get_resource_by_id (GepubDoc *doc, const gchar *id)
 GBytes *
 gepub_doc_get_resource (GepubDoc *doc, const gchar *path)
 {
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (path != NULL, NULL);
+
     return gepub_archive_read_entry (doc->archive, path);
 }
 
@@ -404,6 +451,7 @@ gepub_doc_get_resource_mime_by_id (GepubDoc *doc, const gchar *id)
 {
     GepubResource *gres;
 
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
     g_return_val_if_fail (id != NULL, NULL);
 
     gres = g_hash_table_lookup (doc->resources, id);
@@ -426,7 +474,12 @@ gchar *
 gepub_doc_get_resource_mime (GepubDoc *doc, const gchar *path)
 {
     GepubResource *gres;
-    GList *keys = g_hash_table_get_keys (doc->resources);
+    GList *keys;
+
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (path != NULL, NULL);
+
+    keys = g_hash_table_get_keys (doc->resources);
 
     while (keys) {
         gres = ((GepubResource*)g_hash_table_lookup (doc->resources, keys->data));
@@ -450,7 +503,10 @@ gepub_doc_get_resource_mime (GepubDoc *doc, const gchar *path)
 gchar *
 gepub_doc_get_current_mime (GepubDoc *doc)
 {
-    return gepub_doc_get_resource_mime_by_id (doc, doc->page->data);
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (doc->chapter != NULL, NULL);
+
+    return gepub_doc_get_resource_mime_by_id (doc, doc->chapter->data);
 }
 
 /**
@@ -462,7 +518,10 @@ gepub_doc_get_current_mime (GepubDoc *doc)
 GBytes *
 gepub_doc_get_current (GepubDoc *doc)
 {
-    return gepub_doc_get_resource_by_id (doc, doc->page->data);
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (doc->chapter != NULL, NULL);
+
+    return gepub_doc_get_resource_by_id (doc, doc->chapter->data);
 }
 
 /**
@@ -470,18 +529,23 @@ gepub_doc_get_current (GepubDoc *doc)
  * @doc: a #GepubDoc
  *
  * Returns: (transfer full): the current chapter
- * data, with resource uris renamed so they have the epub:// prefix and all
+ * data, with resource uris renamed so they have the epub:/// prefix and all
  * are relative to the root file
  */
 GBytes *
 gepub_doc_get_current_with_epub_uris (GepubDoc *doc)
 {
-    GBytes *content = gepub_doc_get_current (doc);
-    gchar *path = gepub_doc_get_current_path (doc);
-    // getting the basepath of the current xhtml loaded
-    gchar *base = g_path_get_dirname (path);
+    GBytes *content, *replaced;
+    gchar *path, *base;
 
-    GBytes *replaced = gepub_utils_replace_resources (content, base);
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+
+    content = gepub_doc_get_current (doc);
+    path = gepub_doc_get_current_path (doc);
+    // getting the basepath of the current xhtml loaded
+    base = g_path_get_dirname (path);
+
+    replaced = gepub_utils_replace_resources (content, base);
 
     g_free (path);
     g_bytes_unref (content);
@@ -501,10 +565,12 @@ gepub_doc_get_text (GepubDoc *doc)
     xmlDoc *xdoc = NULL;
     xmlNode *root_element = NULL;
     GBytes *current;
-    const guchar *data;
+    const gchar *data;
     gsize size;
 
     GList *texts = NULL;
+
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
 
     current = gepub_doc_get_current (doc);
     if (!current) {
@@ -534,13 +600,16 @@ gepub_doc_get_text_by_id (GepubDoc *doc, const gchar *id)
     xmlDoc *xdoc = NULL;
     xmlNode *root_element = NULL;
     gsize size;
-    const guchar *res;
+    const gchar *res;
     GBytes *contents;
 
     GList *texts = NULL;
 
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (id != NULL, NULL);
+
     contents = gepub_doc_get_resource_by_id (doc, id);
-    if (!res) {
+    if (!contents) {
         return NULL;
     }
 
@@ -556,14 +625,14 @@ gepub_doc_get_text_by_id (GepubDoc *doc, const gchar *id)
 }
 
 static gboolean
-gepub_doc_set_page_internal (GepubDoc *doc,
-                             GList    *page)
+gepub_doc_set_chapter_internal (GepubDoc *doc,
+                                GList    *chapter)
 {
-    if (!page || doc->page == page)
+    if (!chapter || doc->chapter == chapter)
         return FALSE;
 
-    doc->page = page;
-    g_object_notify_by_pspec (G_OBJECT (doc), properties[PROP_PAGE]);
+    doc->chapter = chapter;
+    g_object_notify_by_pspec (G_OBJECT (doc), properties[PROP_CHAPTER]);
 
     return TRUE;
 }
@@ -572,67 +641,81 @@ gepub_doc_set_page_internal (GepubDoc *doc,
  * gepub_doc_go_next:
  * @doc: a #GepubDoc
  *
- * Returns: TRUE on success, FALSE if there's no next pages
+ * Returns: TRUE on success, FALSE if there's no next chapter
  */
 gboolean
 gepub_doc_go_next (GepubDoc *doc)
 {
-    return gepub_doc_set_page_internal (doc, doc->page->next);
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), FALSE);
+    g_return_val_if_fail (doc->chapter != NULL, FALSE);
+
+    return gepub_doc_set_chapter_internal (doc, doc->chapter->next);
 }
 
 /**
  * gepub_doc_go_prev:
  * @doc: a #GepubDoc
  *
- * Returns: TRUE on success, FALSE if there's no prev pages
+ * Returns: TRUE on success, FALSE if there's no previous chapter
  */
 gboolean
 gepub_doc_go_prev (GepubDoc *doc)
 {
-    return gepub_doc_set_page_internal (doc, doc->page->prev);
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), FALSE);
+    g_return_val_if_fail (doc->chapter != NULL, FALSE);
+
+    return gepub_doc_set_chapter_internal (doc, doc->chapter->prev);
 }
 
 /**
- * gepub_doc_get_n_pages:
+ * gepub_doc_get_n_chapters:
  * @doc: a #GepubDoc
  *
- * Returns: the number of pages in the document
+ * Returns: the number of chapters in the document
  */
 int
-gepub_doc_get_n_pages (GepubDoc *doc)
+gepub_doc_get_n_chapters (GepubDoc *doc)
 {
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), 0);
+
     return g_list_length (doc->spine);
 }
 
 /**
- * gepub_doc_get_page:
+ * gepub_doc_get_chapter:
  * @doc: a #GepubDoc
  *
- * Returns: the current page index, starting from 0
+ * Returns: the current chapter index, starting from 0
  */
 int
-gepub_doc_get_page (GepubDoc *doc)
+gepub_doc_get_chapter (GepubDoc *doc)
 {
-    return g_list_position (doc->spine, doc->page);
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), 0);
+    g_return_val_if_fail (doc->spine != NULL, 0);
+    g_return_val_if_fail (doc->chapter != NULL, 0);
+
+    return g_list_position (doc->spine, doc->chapter);
 }
 
 /**
- * gepub_doc_set_page:
+ * gepub_doc_set_chapter:
  * @doc: a #GepubDoc
- * @index: the index of the new page
+ * @index: the index of the new chapter
  *
- * Sets the document current page to @index.
+ * Sets the document current chapter to @index.
  */
 void
-gepub_doc_set_page (GepubDoc *doc,
+gepub_doc_set_chapter (GepubDoc *doc,
                     gint      index)
 {
-    GList *page;
+    GList *chapter;
 
-    g_return_if_fail (index >= 0 && index <= gepub_doc_get_n_pages (doc));
+    g_return_if_fail (GEPUB_IS_DOC (doc));
 
-    page = g_list_nth (doc->spine, index);
-    gepub_doc_set_page_internal (doc, page);
+    g_return_if_fail (index >= 0 && index <= gepub_doc_get_n_chapters (doc));
+
+    chapter = g_list_nth (doc->spine, index);
+    gepub_doc_set_chapter_internal (doc, chapter);
 }
 
 /**
@@ -649,18 +732,17 @@ gepub_doc_get_cover (GepubDoc *doc)
     xmlNode *root_element = NULL;
     xmlNode *mnode = NULL;
     gchar *ret;
-    xmlChar *text;
     const char *data;
     gsize size;
+
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (doc->content != NULL, NULL);
 
     data = g_bytes_get_data (doc->content, &size);
     xdoc = xmlRecoverMemory (data, size);
     root_element = xmlDocGetRootElement (xdoc);
     mnode = gepub_utils_get_element_by_attr (root_element, "name", "cover");
-    text = xmlGetProp(mnode, "content");
-
-    ret = g_strdup (text);
-    xmlFree (text);
+    ret = gepub_utils_get_prop (mnode, "content");
 
     xmlFreeDoc (xdoc);
 
@@ -677,7 +759,12 @@ gepub_doc_get_cover (GepubDoc *doc)
 gchar *
 gepub_doc_get_resource_path (GepubDoc *doc, const gchar *id)
 {
-    GepubResource *gres = g_hash_table_lookup (doc->resources, id);
+    GepubResource *gres;
+
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (id != NULL, NULL);
+
+    gres = g_hash_table_lookup (doc->resources, id);
     if (!gres) {
         // not found
         return NULL;
@@ -695,7 +782,10 @@ gepub_doc_get_resource_path (GepubDoc *doc, const gchar *id)
 gchar *
 gepub_doc_get_current_path (GepubDoc *doc)
 {
-    return gepub_doc_get_resource_path (doc, doc->page->data);
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (doc->chapter != NULL, NULL);
+
+    return gepub_doc_get_resource_path (doc, doc->chapter->data);
 }
 
 /**
@@ -708,5 +798,8 @@ gepub_doc_get_current_path (GepubDoc *doc)
 const gchar *
 gepub_doc_get_current_id (GepubDoc *doc)
 {
-    return doc->page->data;
+    g_return_val_if_fail (GEPUB_IS_DOC (doc), NULL);
+    g_return_val_if_fail (doc->chapter != NULL, NULL);
+
+    return doc->chapter->data;
 }

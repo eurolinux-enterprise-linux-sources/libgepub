@@ -27,29 +27,42 @@
 #include "gepub-text-chunk.h"
 
 
-/* Replaces the attr value with epub:// prefix for the tagname. This
+/* Replaces the attr value with epub:/// prefix for the tagname. This
  * function also makes the resource absolute based on the epub root
  */
 static void
-set_epub_uri (xmlNode *node, const gchar *path, const gchar *tagname, const gchar *attr)
+set_epub_uri (xmlNode *node,
+              const gchar *path,
+              const gchar *tagname,
+              const gchar *attr,
+              const gchar *ns)
 {
     xmlNode *cur_node = NULL;
     xmlChar *text = NULL;
 
+    gchar *attrname = NULL;
+
     SoupURI *baseURI;
-    gchar *basepath = g_strdup_printf ("epub://%s/", path);
+    gchar *basepath = g_strdup_printf ("epub:///%s/", path);
 
     baseURI = soup_uri_new (basepath);
     g_free (basepath);
 
+    if (ns) {
+        attrname = g_strdup_printf ("%s:%s", ns, attr);
+    } else {
+        attrname = g_strdup (attr);
+    }
+
     for (cur_node = node; cur_node; cur_node = cur_node->next) {
         if (cur_node->type == XML_ELEMENT_NODE ) {
-            text = xmlGetProp (cur_node, attr);
-            if (!strcmp (cur_node->name, tagname) && text) {
-                SoupURI *uri = soup_uri_new_with_base (baseURI, text);
+            text = xmlGetProp (cur_node, BAD_CAST (attr));
+
+            if (!strcmp ((const char *) cur_node->name, tagname) && text) {
+                SoupURI *uri = soup_uri_new_with_base (baseURI, (const char *) text);
                 gchar *value = soup_uri_to_string (uri, FALSE);
 
-                xmlSetProp (cur_node, attr, value);
+                xmlSetProp (cur_node, BAD_CAST (attrname), BAD_CAST (value));
 
                 soup_uri_free (uri);
                 g_free (value);
@@ -61,43 +74,54 @@ set_epub_uri (xmlNode *node, const gchar *path, const gchar *tagname, const gcha
         }
 
         if (cur_node->children)
-            set_epub_uri (cur_node->children, path, tagname, attr);
+            set_epub_uri (cur_node->children, path, tagname, attr, ns);
     }
+
+    g_free (attrname);
 
     soup_uri_free (baseURI);
 }
 
-gboolean
-gepub_utils_has_parent_tag (xmlNode *node, gchar *name, ...)
+static gboolean
+gepub_utils_has_parent_tag (xmlNode *node, const char *name, ...)
 {
     va_list ap;
 
     xmlNode *cur_node = NULL;
     GList *tags = NULL;
     GList *l = NULL;
-    gchar *name2 = NULL;
+    const char *name2 = NULL;
+    gboolean ret = FALSE;
 
     va_start (ap, name);
 
     for (name2 = name; name2 != NULL; name2 = va_arg(ap, gchar*)) {
-        tags = g_list_append (tags, name2);
+        tags = g_list_append (tags, g_ascii_strdown (name2, -1));
     }
 
     for (cur_node = node; cur_node; cur_node = cur_node->parent) {
         if (cur_node->type == XML_ELEMENT_NODE) {
             for (l = tags; l; l = l->next) {
-                gchar *nodetag = g_ascii_strup (cur_node->name, strlen (cur_node->name));
-                name2 = g_ascii_strup (l->data, strlen (l->data));
+                gchar *nodetag = g_ascii_strdown ((char *) cur_node->name, -1);
+                name2 = l->data;
 
                 if (!strcmp (nodetag, name2))
-                    return TRUE;
+                    ret = TRUE;
+
+                g_free (nodetag);
+
+                if (ret == TRUE)
+                  goto out;
             }
         }
     }
 
     va_end (ap);
 
-    return FALSE;
+out:
+    g_list_free_full (tags, g_free);
+
+    return ret;
 }
 
 /**
@@ -115,7 +139,7 @@ gepub_utils_get_element_by_tag (xmlNode *node, const gchar *name)
 
     for (cur_node = node; cur_node; cur_node = cur_node->next) {
         if (cur_node->type == XML_ELEMENT_NODE ) {
-            if (!strcmp (cur_node->name, name))
+            if (!strcmp ((const char *) cur_node->name, name))
                 return cur_node;
         }
 
@@ -143,8 +167,9 @@ gepub_utils_get_element_by_attr (xmlNode *node, const gchar *attr, const gchar *
 
     for (cur_node = node; cur_node; cur_node = cur_node->next) {
         if (cur_node->type == XML_ELEMENT_NODE ) {
-            text = xmlGetProp (cur_node, attr);
-            if (text && !strcmp (text, value)) {
+            text = xmlGetProp (cur_node, BAD_CAST (attr));
+            if (text && !strcmp ((const char *) text, value)) {
+                xmlFree (text);
                 return cur_node;
             }
             if (text) {
@@ -182,13 +207,13 @@ gepub_utils_get_text_elements (xmlNode *node)
             GepubTextChunk *text_chunk = NULL;
 
             if (gepub_utils_has_parent_tag (cur_node, "b", "strong", NULL)) {
-                text_chunk = gepub_text_chunk_new (GEPUBTextBold, cur_node->content);
+                text_chunk = gepub_text_chunk_new (GEPUBTextBold, (char *) cur_node->content);
             } else if (gepub_utils_has_parent_tag (cur_node, "i", "em", NULL)) {
-                text_chunk = gepub_text_chunk_new (GEPUBTextItalic, cur_node->content);
+                text_chunk = gepub_text_chunk_new (GEPUBTextItalic, (char *) cur_node->content);
             } else if (gepub_utils_has_parent_tag (cur_node, "h1", "h2", "h3", "h4", "h5", NULL)) {
-                text_chunk = gepub_text_chunk_new (GEPUBTextHeader, cur_node->content);
+                text_chunk = gepub_text_chunk_new (GEPUBTextHeader, (char *) cur_node->content);
             } else if (gepub_utils_has_parent_tag (cur_node, "p", NULL)) {
-                text_chunk = gepub_text_chunk_new (GEPUBTextNormal, cur_node->content);
+                text_chunk = gepub_text_chunk_new (GEPUBTextNormal, (char *) cur_node->content);
             }
 
             if (text_chunk)
@@ -197,7 +222,7 @@ gepub_utils_get_text_elements (xmlNode *node)
 
         if (cur_node->type == XML_ELEMENT_NODE) {
             GepubTextChunk *text_chunk = NULL;
-            gchar *nodetag = g_ascii_strup (cur_node->name, strlen (cur_node->name));
+            gchar *nodetag = g_ascii_strup ((const char *) cur_node->name, -1);
             if (text_list && (!strcmp (nodetag, "P") || !strcmp (nodetag, "BR"))) {
                 gchar *old_text;
                 text_chunk = (GepubTextChunk*)(g_list_last (text_list)->data);
@@ -205,6 +230,7 @@ gepub_utils_get_text_elements (xmlNode *node)
                 text_chunk->text = g_strdup_printf ("%s\n", old_text);
                 g_free (old_text);
             }
+            g_free (nodetag);
         }
 
         // TODO add images to this list of objects
@@ -217,8 +243,15 @@ gepub_utils_get_text_elements (xmlNode *node)
     return text_list;
 }
 
-/* Replacing epub media paths, for css, image and svg files, to be
- * able to provide these files to webkit from the epub file
+/**
+ * gepub_utils_replace_resources:
+ * @content: a #GBytes containing the XML data
+ * @path: The path to replace
+ *
+ * Replacing epub media paths, for css, image and svg files, to be
+ * able to provide these files to webkit from the epub file.
+ *
+ * Returns: a new #GBytes containing the updated XML data
  */
 GBytes *
 gepub_utils_replace_resources (GBytes *content, const gchar *path)
@@ -226,7 +259,7 @@ gepub_utils_replace_resources (GBytes *content, const gchar *path)
     xmlDoc *doc = NULL;
     xmlNode *root_element = NULL;
     guchar *buffer;
-    const guchar *data;
+    const gchar *data;
     gsize bufsize;
 
     data = g_bytes_get_data (content, &bufsize);
@@ -234,16 +267,39 @@ gepub_utils_replace_resources (GBytes *content, const gchar *path)
     root_element = xmlDocGetRootElement (doc);
 
     // replacing css resources
-    set_epub_uri (root_element, path, "link", "href");
+    set_epub_uri (root_element, path, "link", "href", NULL);
     // replacing images resources
-    set_epub_uri (root_element, path, "img", "src");
+    set_epub_uri (root_element, path, "img", "src", NULL);
     // replacing svg images resources
-    set_epub_uri (root_element, path, "image", "xlink:href");
+    set_epub_uri (root_element, path, "image", "href", "xlink");
     // replacing crosslinks
-    set_epub_uri (root_element, path, "a", "href");
+    set_epub_uri (root_element, path, "a", "href", NULL);
 
     xmlDocDumpFormatMemory (doc, (xmlChar**)&buffer, (int*)&bufsize, 1);
     xmlFreeDoc (doc);
 
     return g_bytes_new_take (buffer, bufsize);
+}
+
+
+/**
+ * gepub_utils_get_prop:
+ * @node: an #xmlNode
+ * @prop: a property
+ *
+ * Returns: a string with the property contained in @prop
+ */
+gchar *
+gepub_utils_get_prop (xmlNode *node, const gchar *prop)
+{
+    xmlChar *p = NULL;
+    gchar *ret = NULL;
+
+    p = xmlGetProp (node, (const xmlChar *) prop);
+    if (p) {
+        ret = g_strdup ((char *) p);
+        xmlFree (p);
+    }
+
+    return ret;
 }

@@ -54,7 +54,7 @@ gepub_text_chunk_class_init (GepubTextChunkClass *klass)
  * Returns: (transfer none): the chunk text
  */
 GepubTextChunk *
-gepub_text_chunk_new (GepubTextChunkType type, const guchar *text)
+gepub_text_chunk_new (GepubTextChunkType type, const gchar *text)
 {
     GepubTextChunk *t;
 
@@ -69,9 +69,9 @@ gepub_text_chunk_new (GepubTextChunkType type, const guchar *text)
  * gepub_text_chunk_type_str:
  * @chunk: a #GepubTextChunk
  *
- * Returns: (transfer none): the chunk text
+ * Returns: the chunk text
  */
-gchar *
+const char *
 gepub_text_chunk_type_str (GepubTextChunk *chunk)
 {
     switch (chunk->type) {
@@ -81,6 +81,7 @@ gepub_text_chunk_type_str (GepubTextChunk *chunk)
             return "italic";
         case GEPUBTextHeader:
             return "header";
+        case GEPUBTextNormal:
         default:
             return "normal";
     }
@@ -90,9 +91,9 @@ gepub_text_chunk_type_str (GepubTextChunk *chunk)
  * gepub_text_chunk_text:
  * @chunk: a #GepubTextChunk
  *
- * Returns: (transfer none): the chunk text
+ * Returns: the chunk text
  */
-gchar *
+const char *
 gepub_text_chunk_text (GepubTextChunk *chunk)
 {
     return chunk->text;

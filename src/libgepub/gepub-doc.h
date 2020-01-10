@@ -44,7 +44,7 @@ typedef struct _GepubResource GepubResource;
 
 GType             gepub_doc_get_type                        (void) G_GNUC_CONST;
 
-GepubDoc         *gepub_doc_new                             (const gchar *path);
+GepubDoc         *gepub_doc_new                             (const gchar *path, GError **error);
 GBytes           *gepub_doc_get_content                     (GepubDoc *doc);
 gchar            *gepub_doc_get_metadata                    (GepubDoc *doc, const gchar *mdata);
 GBytes           *gepub_doc_get_resource                    (GepubDoc *doc, const gchar *path);
@@ -64,9 +64,9 @@ const gchar      *gepub_doc_get_current_id                  (GepubDoc *doc);
 
 gboolean          gepub_doc_go_next                         (GepubDoc *doc);
 gboolean          gepub_doc_go_prev                         (GepubDoc *doc);
-gint              gepub_doc_get_n_pages                     (GepubDoc *doc);
-gint              gepub_doc_get_page                        (GepubDoc *doc);
-void              gepub_doc_set_page                        (GepubDoc *doc,
+gint              gepub_doc_get_n_chapters                  (GepubDoc *doc);
+gint              gepub_doc_get_chapter                     (GepubDoc *doc);
+void              gepub_doc_set_chapter                     (GepubDoc *doc,
                                                              gint      index);
 
 G_END_DECLS

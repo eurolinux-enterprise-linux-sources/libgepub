@@ -1,12 +1,15 @@
+%global apiver 0.6
+
 Name:           libgepub
-Version:        0.4
+Version:        0.6.0
 Release:        1%{?dist}
 Summary:        Library for epub documents
 
 License:        LGPLv2+
 URL:            https://git.gnome.org/browse/libgepub
-Source0:        https://download.gnome.org/sources/libgepub/0.4/libgepub-%{version}.tar.xz
+Source0:        https://download.gnome.org/sources/libgepub/0.6/libgepub-%{version}.tar.xz
 
+BuildRequires:  meson
 BuildRequires:  pkgconfig(gio-2.0)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(gobject-2.0)
@@ -32,21 +35,16 @@ developing applications that use %{name}.
 
 
 %prep
-%autosetup
+%autosetup -p1
 
 
 %build
-%configure --disable-static
-%make_build
+%meson
+%meson_build
 
 
 %install
-%make_install
-find $RPM_BUILD_ROOT -name '*.la' -delete
-
-
-%check
-make check
+%meson_install
 
 
 %post -p /sbin/ldconfig
@@ -57,18 +55,22 @@ make check
 %files
 %license COPYING
 %dir %{_libdir}/girepository-1.0
-%{_libdir}/girepository-1.0/Gepub-0.4.typelib
-%{_libdir}/libgepub.so.0*
+%{_libdir}/girepository-1.0/Gepub-%{apiver}.typelib
+%{_libdir}/libgepub-%{apiver}.so.0*
 
 %files devel
-%{_includedir}/libgepub/
-%{_libdir}/libgepub.so
-%{_libdir}/pkgconfig/libgepub.pc
+%{_includedir}/libgepub-%{apiver}/
+%{_libdir}/libgepub-%{apiver}.so
+%{_libdir}/pkgconfig/libgepub-%{apiver}.pc
 %dir %{_datadir}/gir-1.0
-%{_datadir}/gir-1.0/Gepub-0.4.gir
+%{_datadir}/gir-1.0/Gepub-%{apiver}.gir
 
 
 %changelog
+* Thu Mar 15 2018 Kalev Lember <klember@redhat.com> - 0.6.0-1
+- Update to 0.6.0
+- Resolves: #1569288
+
 * Thu Sep 01 2016 Kalev Lember <klember@redhat.com> - 0.4-1
 - Update to 0.4
 
